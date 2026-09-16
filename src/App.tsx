@@ -2,8 +2,10 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 
-const PLAYER_Y = 0.5
+const PLAYER_RADIUS = 0.5
+const PLAYER_Y = PLAYER_RADIUS
 const SPEED = 8
+const ARRIVAL_DISTANCE = 0.05
 const CAMERA_YAW_SPEED = 1.8
 const CAMERA_PITCH_SPEED = 1.4
 const CAMERA_PITCH_MIN = 0.25
@@ -92,7 +94,7 @@ function Player({
     const dx = target.x - position.x
     const dz = target.z - position.z
     const distance = Math.hypot(dx, dz)
-    if (distance >= 0.05) {
+    if (distance >= ARRIVAL_DISTANCE) {
       const step = Math.min(SPEED * delta, distance)
       position.x += (dx / distance) * step
       position.z += (dz / distance) * step
@@ -102,10 +104,51 @@ function Player({
   })
 
   return (
-    <mesh ref={ref} position={[0, PLAYER_Y, 0]}>
-      <sphereGeometry args={[PLAYER_Y]} />
+    <mesh ref={ref} position={[0, PLAYER_Y, 0]} raycast={ignoreRaycast}>
+      <sphereGeometry args={[PLAYER_RADIUS]} />
       <meshStandardMaterial color="red" />
     </mesh>
+  )
+}
+
+function ignoreRaycast() { }
+
+function DestinationMarker({
+  target,
+  playerPos,
+}: {
+  target: THREE.Vector3
+  playerPos: RefObject<THREE.Vector3>
+}) {
+  const group = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    const marker = group.current
+    if (!marker) return
+
+    const pos = playerPos.current
+    const distance = Math.hypot(target.x - pos.x, target.z - pos.z)
+    const visible = distance > PLAYER_RADIUS
+
+    marker.visible = visible
+    if (!visible) return
+
+    marker.position.set(target.x, 0.04, target.z)
+    const pulse = 1 + Math.sin(state.clock.elapsedTime * 7) * 0.1
+    marker.scale.setScalar(pulse)
+  })
+
+  return (
+    <group ref={group} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh raycast={ignoreRaycast}>
+        <ringGeometry args={[0.55, 0.85, 48]} />
+        <meshBasicMaterial color="#ffe566" transparent opacity={0.95} depthWrite={false} />
+      </mesh>
+      <mesh raycast={ignoreRaycast}>
+        <circleGeometry args={[0.28, 32]} />
+        <meshBasicMaterial color="#fff6b0" transparent opacity={0.5} depthWrite={false} />
+      </mesh>
+    </group>
   )
 }
 
@@ -136,12 +179,13 @@ function App() {
         <directionalLight position={[10, 20, 10]} intensity={1} />
         <CameraControls playerPos={playerPos} />
         <Player target={target} playerPos={playerPos} />
+        <DestinationMarker target={target} playerPos={playerPos} />
         <Ground
           onMove={(point) => {
             target.set(point.x, PLAYER_Y, point.z)
           }}
         />
-        <gridHelper args={[100, 100]} position={[0, 0.01, 0]} />
+        <gridHelper args={[100, 100]} position={[0, 0.01, 0]} raycast={ignoreRaycast} />
       </Canvas>
     </div>
   )
