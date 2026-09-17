@@ -1,10 +1,7 @@
 import {
-  Component,
-  Suspense,
   useEffect,
   useRef,
   useState,
-  type ReactNode,
   type RefObject,
 } from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
@@ -26,7 +23,7 @@ const CHARACTER_YAW_OFFSET = 0
 const IDLE_CLIP = 'HumanArmature|Man_Idle'
 const RUN_CLIP = 'HumanArmature|Man_Run'
 
-function createInitialOrbit() {
+const createInitialOrbit = () => {
   const offset = new THREE.Vector3(10, 12 - CAMERA_LOOK_Y, 10)
   const spherical = new THREE.Spherical().setFromVector3(offset)
   spherical.phi = THREE.MathUtils.clamp(
@@ -37,14 +34,14 @@ function createInitialOrbit() {
   return spherical
 }
 
-function ignoreRaycast() { }
+const ignoreRaycast = () => { }
 
-function stepPlayer(
+const stepPlayer = (
   object: THREE.Object3D,
   target: THREE.Vector3,
   delta: number,
   yawOffset = 0,
-) {
+) => {
   const { position } = object
   const dx = target.x - position.x
   const dz = target.z - position.z
@@ -59,12 +56,12 @@ function stepPlayer(
   return isMoving
 }
 
-function syncLocomotion(
+const syncLocomotion = (
   isMoving: boolean,
   wasMoving: RefObject<boolean>,
   idle: THREE.AnimationAction | null | undefined,
   run: THREE.AnimationAction | null | undefined,
-) {
+) => {
   if (!idle || !run) return
   if (isMoving === wasMoving.current) return
   wasMoving.current = isMoving
@@ -75,7 +72,7 @@ function syncLocomotion(
   next.reset().fadeIn(0.2).play()
 }
 
-function CameraControls({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) {
+const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) => {
   const camera = useThree((state) => state.camera)
   const keys = useRef({ w: false, a: false, s: false, d: false })
   const spherical = useRef(createInitialOrbit())
@@ -130,37 +127,13 @@ function CameraControls({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
   return null
 }
 
-function SpherePlayer({
+const CharacterPlayer = ({
   target,
   playerPos,
 }: {
   target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
-}) {
-  const ref = useRef<THREE.Mesh>(null)
-
-  useFrame((_, delta) => {
-    const mesh = ref.current
-    if (!mesh) return
-    stepPlayer(mesh, target, delta)
-    playerPos.current.copy(mesh.position)
-  })
-
-  return (
-    <mesh ref={ref} position={[0, PLAYER_RADIUS, 0]} raycast={ignoreRaycast}>
-      <sphereGeometry args={[PLAYER_RADIUS]} />
-      <meshStandardMaterial color="red" />
-    </mesh>
-  )
-}
-
-function CharacterPlayer({
-  target,
-  playerPos,
-}: {
-  target: THREE.Vector3
-  playerPos: RefObject<THREE.Vector3>
-}) {
+}) => {
   const group = useRef<THREE.Group>(null)
   const { scene, animations } = useGLTF(CHARACTER_URL)
   const { actions } = useAnimations(animations, scene)
@@ -197,36 +170,13 @@ function CharacterPlayer({
   )
 }
 
-class PlayerErrorBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false }
-
-  static getDerivedStateFromError() {
-    return { hasError: true }
-  }
-
-  componentDidCatch(error: Error) {
-    console.warn(
-      `Failed to load ${CHARACTER_URL}. Place a Mixamo GLB at public/models/character.glb.`,
-      error,
-    )
-  }
-
-  render() {
-    if (this.state.hasError) return this.props.fallback
-    return this.props.children
-  }
-}
-
-function DestinationMarker({
+const DestinationMarker = ({
   target,
   playerPos,
 }: {
   target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
-}) {
+}) => {
   const group = useRef<THREE.Group>(null)
 
   useFrame((state) => {
@@ -259,7 +209,7 @@ function DestinationMarker({
   )
 }
 
-function Ground({ onMove }: { onMove: (point: THREE.Vector3) => void }) {
+const Ground = ({ onMove }: { onMove: (point: THREE.Vector3) => void }) => {
   return (
     <mesh
       rotation={[-Math.PI / 2, 0, 0]}
@@ -274,7 +224,7 @@ function Ground({ onMove }: { onMove: (point: THREE.Vector3) => void }) {
   )
 }
 
-function App() {
+const App = () => {
   const [target] = useState(() => new THREE.Vector3())
   const playerPos = useRef(new THREE.Vector3(0, CAMERA_LOOK_Y, 0))
 
@@ -285,19 +235,9 @@ function App() {
         <ambientLight intensity={0.8} />
         <directionalLight position={[10, 20, 10]} intensity={1} />
         <CameraControls playerPos={playerPos} />
-        <PlayerErrorBoundary
-          fallback={<SpherePlayer target={target} playerPos={playerPos} />}
-        >
-          <Suspense fallback={null}>
-            <CharacterPlayer target={target} playerPos={playerPos} />
-          </Suspense>
-        </PlayerErrorBoundary>
+        <CharacterPlayer target={target} playerPos={playerPos} />
         <DestinationMarker target={target} playerPos={playerPos} />
-        <Ground
-          onMove={(point) => {
-            target.set(point.x, 0, point.z)
-          }}
-        />
+        <Ground onMove={point => target.set(point.x, 0, point.z)} />
         <gridHelper args={[100, 100]} position={[0, 0.01, 0]} raycast={ignoreRaycast} />
       </Canvas>
     </div>
