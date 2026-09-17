@@ -16,6 +16,9 @@ const CAMERA_YAW_SPEED = 1.8
 const CAMERA_PITCH_SPEED = 1.4
 const CAMERA_PITCH_MIN = 0.25
 const CAMERA_PITCH_MAX = Math.PI / 2 - 0.12
+const CAMERA_ZOOM_MIN = 5
+const CAMERA_ZOOM_MAX = 20
+const CAMERA_ZOOM_SPEED = 0.0012
 
 const CHARACTER_URL = '/models/character.glb'
 const CHARACTER_SCALE = 1
@@ -30,6 +33,11 @@ const createInitialOrbit = () => {
     spherical.phi,
     CAMERA_PITCH_MIN,
     CAMERA_PITCH_MAX,
+  )
+  spherical.radius = THREE.MathUtils.clamp(
+    spherical.radius,
+    CAMERA_ZOOM_MIN,
+    CAMERA_ZOOM_MAX,
   )
   return spherical
 }
@@ -74,6 +82,7 @@ const syncLocomotion = (
 
 const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) => {
   const camera = useThree((state) => state.camera)
+  const gl = useThree((state) => state.gl)
   const keys = useRef({ w: false, a: false, s: false, d: false })
   const spherical = useRef(createInitialOrbit())
   const offset = useRef(new THREE.Vector3())
@@ -94,16 +103,28 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
       keys.current.s = false
       keys.current.d = false
     }
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const orbit = spherical.current
+      orbit.radius = THREE.MathUtils.clamp(
+        orbit.radius * (1 + event.deltaY * CAMERA_ZOOM_SPEED),
+        CAMERA_ZOOM_MIN,
+        CAMERA_ZOOM_MAX,
+      )
+    }
 
+    const canvas = gl.domElement
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
+    canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
+      canvas.removeEventListener('wheel', onWheel)
     }
-  }, [])
+  }, [gl])
 
   useFrame((_, delta) => {
     const target = playerPos.current
@@ -118,6 +139,7 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
     if (s) orbit.phi += CAMERA_PITCH_SPEED * delta
 
     orbit.phi = THREE.MathUtils.clamp(orbit.phi, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX)
+    orbit.radius = THREE.MathUtils.clamp(orbit.radius, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 
     offset.current.setFromSpherical(orbit)
     camera.position.copy(target).add(offset.current)
