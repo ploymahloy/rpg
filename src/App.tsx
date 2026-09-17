@@ -1,18 +1,33 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import {
+  Component,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { useAnimations, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 
 const PLAYER_RADIUS = 0.5
-const PLAYER_Y = PLAYER_RADIUS
 const SPEED = 8
 const ARRIVAL_DISTANCE = 0.05
+const CAMERA_LOOK_Y = 1.2
 const CAMERA_YAW_SPEED = 1.8
 const CAMERA_PITCH_SPEED = 1.4
 const CAMERA_PITCH_MIN = 0.25
 const CAMERA_PITCH_MAX = Math.PI / 2 - 0.12
 
+const CHARACTER_URL = '/models/character.glb'
+const CHARACTER_SCALE = 1
+const CHARACTER_YAW_OFFSET = 0
+const IDLE_CLIP = 'HumanArmature|Man_Idle'
+const RUN_CLIP = 'HumanArmature|Man_Run'
+
 function createInitialOrbit() {
-  const offset = new THREE.Vector3(10, 12 - PLAYER_Y, 10)
+  const offset = new THREE.Vector3(10, 12 - CAMERA_LOOK_Y, 10)
   const spherical = new THREE.Spherical().setFromVector3(offset)
   spherical.phi = THREE.MathUtils.clamp(
     spherical.phi,
@@ -20,6 +35,44 @@ function createInitialOrbit() {
     CAMERA_PITCH_MAX,
   )
   return spherical
+}
+
+function ignoreRaycast() { }
+
+function stepPlayer(
+  object: THREE.Object3D,
+  target: THREE.Vector3,
+  delta: number,
+  yawOffset = 0,
+) {
+  const { position } = object
+  const dx = target.x - position.x
+  const dz = target.z - position.z
+  const distance = Math.hypot(dx, dz)
+  const isMoving = distance >= ARRIVAL_DISTANCE
+  if (isMoving) {
+    const step = Math.min(SPEED * delta, distance)
+    position.x += (dx / distance) * step
+    position.z += (dz / distance) * step
+    object.rotation.y = Math.atan2(dx, dz) + yawOffset
+  }
+  return isMoving
+}
+
+function syncLocomotion(
+  isMoving: boolean,
+  wasMoving: RefObject<boolean>,
+  idle: THREE.AnimationAction | null | undefined,
+  run: THREE.AnimationAction | null | undefined,
+) {
+  if (!idle || !run) return
+  if (isMoving === wasMoving.current) return
+  wasMoving.current = isMoving
+
+  const next = isMoving ? run : idle
+  const prev = isMoving ? idle : run
+  prev.fadeOut(0.2)
+  next.reset().fadeIn(0.2).play()
 }
 
 function CameraControls({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) {
@@ -77,7 +130,7 @@ function CameraControls({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
   return null
 }
 
-function Player({
+function SpherePlayer({
   target,
   playerPos,
 }: {
@@ -89,29 +142,83 @@ function Player({
   useFrame((_, delta) => {
     const mesh = ref.current
     if (!mesh) return
-
-    const { position } = mesh
-    const dx = target.x - position.x
-    const dz = target.z - position.z
-    const distance = Math.hypot(dx, dz)
-    if (distance >= ARRIVAL_DISTANCE) {
-      const step = Math.min(SPEED * delta, distance)
-      position.x += (dx / distance) * step
-      position.z += (dz / distance) * step
-    }
-
-    playerPos.current.copy(position)
+    stepPlayer(mesh, target, delta)
+    playerPos.current.copy(mesh.position)
   })
 
   return (
-    <mesh ref={ref} position={[0, PLAYER_Y, 0]} raycast={ignoreRaycast}>
+    <mesh ref={ref} position={[0, PLAYER_RADIUS, 0]} raycast={ignoreRaycast}>
       <sphereGeometry args={[PLAYER_RADIUS]} />
       <meshStandardMaterial color="red" />
     </mesh>
   )
 }
 
-function ignoreRaycast() { }
+function CharacterPlayer({
+  target,
+  playerPos,
+}: {
+  target: THREE.Vector3
+  playerPos: RefObject<THREE.Vector3>
+}) {
+  const group = useRef<THREE.Group>(null)
+  const { scene, animations } = useGLTF(CHARACTER_URL)
+  const { actions } = useAnimations(animations, scene)
+  const wasMoving = useRef(false)
+  const startedIdle = useRef(false)
+
+  useEffect(() => {
+    scene.traverse((obj) => {
+      obj.raycast = ignoreRaycast
+    })
+  }, [scene])
+
+  useFrame((_, delta) => {
+    const mesh = group.current
+    if (!mesh) return
+
+    const idle = actions[IDLE_CLIP]
+    const run = actions[RUN_CLIP]
+    const isMoving = stepPlayer(mesh, target, delta, CHARACTER_YAW_OFFSET)
+
+    if (idle && !startedIdle.current) {
+      idle.reset().play()
+      startedIdle.current = true
+    }
+    syncLocomotion(isMoving, wasMoving, idle, run)
+
+    playerPos.current.set(mesh.position.x, CAMERA_LOOK_Y, mesh.position.z)
+  })
+
+  return (
+    <group ref={group} position={[0, 0, 0]}>
+      <primitive object={scene} scale={CHARACTER_SCALE} />
+    </group>
+  )
+}
+
+class PlayerErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn(
+      `Failed to load ${CHARACTER_URL}. Place a Mixamo GLB at public/models/character.glb.`,
+      error,
+    )
+  }
+
+  render() {
+    if (this.state.hasError) return this.props.fallback
+    return this.props.children
+  }
+}
 
 function DestinationMarker({
   target,
@@ -168,8 +275,8 @@ function Ground({ onMove }: { onMove: (point: THREE.Vector3) => void }) {
 }
 
 function App() {
-  const [target] = useState(() => new THREE.Vector3(0, PLAYER_Y, 0))
-  const playerPos = useRef(new THREE.Vector3(0, PLAYER_Y, 0))
+  const [target] = useState(() => new THREE.Vector3())
+  const playerPos = useRef(new THREE.Vector3(0, CAMERA_LOOK_Y, 0))
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
@@ -178,11 +285,17 @@ function App() {
         <ambientLight intensity={0.8} />
         <directionalLight position={[10, 20, 10]} intensity={1} />
         <CameraControls playerPos={playerPos} />
-        <Player target={target} playerPos={playerPos} />
+        <PlayerErrorBoundary
+          fallback={<SpherePlayer target={target} playerPos={playerPos} />}
+        >
+          <Suspense fallback={null}>
+            <CharacterPlayer target={target} playerPos={playerPos} />
+          </Suspense>
+        </PlayerErrorBoundary>
         <DestinationMarker target={target} playerPos={playerPos} />
         <Ground
           onMove={(point) => {
-            target.set(point.x, PLAYER_Y, point.z)
+            target.set(point.x, 0, point.z)
           }}
         />
         <gridHelper args={[100, 100]} position={[0, 0.01, 0]} raycast={ignoreRaycast} />
@@ -190,5 +303,7 @@ function App() {
     </div>
   )
 }
+
+useGLTF.preload(CHARACTER_URL)
 
 export default App
