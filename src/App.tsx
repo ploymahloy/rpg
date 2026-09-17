@@ -16,9 +16,12 @@ const CAMERA_YAW_SPEED = 1.8
 const CAMERA_PITCH_SPEED = 1.4
 const CAMERA_PITCH_MIN = 0.25
 const CAMERA_PITCH_MAX = Math.PI / 2 - 0.12
+const CAMERA_PITCH_DEFAULT = Math.PI / 2 - 0.35
+const CAMERA_YAW_DEFAULT = Math.PI / 4
 const CAMERA_ZOOM_MIN = 5
 const CAMERA_ZOOM_MAX = 20
 const CAMERA_ZOOM_SPEED = 0.0012
+const CAMERA_DISTANCE_DEFAULT = 14
 
 const CHARACTER_URL = '/models/character.glb'
 const CHARACTER_SCALE = 1
@@ -26,21 +29,17 @@ const CHARACTER_YAW_OFFSET = 0
 const IDLE_CLIP = 'HumanArmature|Man_Idle'
 const RUN_CLIP = 'HumanArmature|Man_Run'
 
-const createInitialOrbit = () => {
-  const offset = new THREE.Vector3(10, 12 - CAMERA_LOOK_Y, 10)
-  const spherical = new THREE.Spherical().setFromVector3(offset)
-  spherical.phi = THREE.MathUtils.clamp(
-    spherical.phi,
-    CAMERA_PITCH_MIN,
-    CAMERA_PITCH_MAX,
+const createInitialOrbit = () =>
+  new THREE.Spherical(
+    THREE.MathUtils.clamp(CAMERA_DISTANCE_DEFAULT, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX),
+    THREE.MathUtils.clamp(CAMERA_PITCH_DEFAULT, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX),
+    CAMERA_YAW_DEFAULT,
   )
-  spherical.radius = THREE.MathUtils.clamp(
-    spherical.radius,
-    CAMERA_ZOOM_MIN,
-    CAMERA_ZOOM_MAX,
-  )
-  return spherical
-}
+
+const INITIAL_CAMERA_POSITION = (() => {
+  const offset = new THREE.Vector3().setFromSpherical(createInitialOrbit())
+  return [offset.x, offset.y + CAMERA_LOOK_Y, offset.z] as const
+})()
 
 const ignoreRaycast = () => { }
 
@@ -252,7 +251,7 @@ const App = () => {
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
-      <Canvas camera={{ position: [10, 12, 10], fov: 50 }}>
+      <Canvas camera={{ position: [...INITIAL_CAMERA_POSITION], fov: 50 }}>
         <color attach="background" args={['#87ceeb']} />
         <ambientLight intensity={0.8} />
         <directionalLight position={[10, 20, 10]} intensity={1} />
