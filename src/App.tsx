@@ -10,6 +10,7 @@ import * as THREE from 'three'
 
 const PLAYER_RADIUS = 0.5
 const SPEED = 8
+const TURN_SPEED = 10
 const ARRIVAL_DISTANCE = 0.05
 const CAMERA_LOOK_Y = 1.2
 const CAMERA_YAW_SPEED = 1.8
@@ -43,6 +44,23 @@ const INITIAL_CAMERA_POSITION = (() => {
 
 const ignoreRaycast = () => { }
 
+const shortestAngleDelta = (from: number, to: number) =>
+  Math.atan2(Math.sin(to - from), Math.cos(to - from))
+
+const stepYawToward = (
+  object: THREE.Object3D,
+  desiredYaw: number,
+  delta: number,
+) => {
+  const yawDelta = shortestAngleDelta(object.rotation.y, desiredYaw)
+  const maxTurn = TURN_SPEED * delta
+  if (Math.abs(yawDelta) <= maxTurn) {
+    object.rotation.y = desiredYaw
+    return
+  }
+  object.rotation.y += Math.sign(yawDelta) * maxTurn
+}
+
 const stepPlayer = (
   object: THREE.Object3D,
   target: THREE.Vector3,
@@ -58,7 +76,7 @@ const stepPlayer = (
     const step = Math.min(SPEED * delta, distance)
     position.x += (dx / distance) * step
     position.z += (dz / distance) * step
-    object.rotation.y = Math.atan2(dx, dz) + yawOffset
+    stepYawToward(object, Math.atan2(dx, dz) + yawOffset, delta)
   }
   return isMoving
 }
