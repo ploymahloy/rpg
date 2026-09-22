@@ -162,8 +162,8 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
     const { w, a, s, d } = keys.current
     const orbit = spherical.current
 
-    if (a) orbit.theta += CAMERA_YAW_SPEED * delta
-    if (d) orbit.theta -= CAMERA_YAW_SPEED * delta
+    if (d) orbit.theta += CAMERA_YAW_SPEED * delta
+    if (a) orbit.theta -= CAMERA_YAW_SPEED * delta
     if (w) orbit.phi -= CAMERA_PITCH_SPEED * delta
     if (s) orbit.phi += CAMERA_PITCH_SPEED * delta
 
