@@ -7,6 +7,12 @@ import {
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { useAnimations, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
+import {
+  createTerrainGeometry,
+  getHeight,
+  loadHeightmap,
+  type HeightGrid,
+} from './terrain'
 
 const PLAYER_RADIUS = 0.5
 const SPEED = 8
@@ -65,6 +71,7 @@ const stepPlayer = (
   object: THREE.Object3D,
   target: THREE.Vector3,
   delta: number,
+  heights: HeightGrid | null,
   yawOffset = 0,
 ) => {
   const { position } = object
@@ -78,6 +85,11 @@ const stepPlayer = (
     position.z += (dz / distance) * step
     stepYawToward(object, Math.atan2(dx, dz) + yawOffset, delta)
   }
+
+  if (heights) {
+    position.y = getHeight(heights, position.x, position.z)
+  }
+
   return isMoving
 }
 
@@ -169,9 +181,11 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
 const CharacterPlayer = ({
   target,
   playerPos,
+  heightsRef,
 }: {
   target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
+  heightsRef: RefObject<HeightGrid | null>
 }) => {
   const group = useRef<THREE.Group>(null)
   const { scene, animations } = useGLTF(CHARACTER_URL)
@@ -191,7 +205,13 @@ const CharacterPlayer = ({
 
     const idle = actions[IDLE_CLIP]
     const run = actions[RUN_CLIP]
-    const isMoving = stepPlayer(mesh, target, delta, CHARACTER_YAW_OFFSET)
+    const isMoving = stepPlayer(
+      mesh,
+      target,
+      delta,
+      heightsRef.current,
+      CHARACTER_YAW_OFFSET,
+    )
 
     if (idle && !startedIdle.current) {
       idle.reset().play()
@@ -199,7 +219,11 @@ const CharacterPlayer = ({
     }
     syncLocomotion(isMoving, wasMoving, idle, run)
 
-    playerPos.current.set(mesh.position.x, CAMERA_LOOK_Y, mesh.position.z)
+    playerPos.current.set(
+      mesh.position.x,
+      mesh.position.y + CAMERA_LOOK_Y,
+      mesh.position.z,
+    )
   })
 
   return (
@@ -212,9 +236,11 @@ const CharacterPlayer = ({
 const DestinationMarker = ({
   target,
   playerPos,
+  heightsRef,
 }: {
   target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
+  heightsRef: RefObject<HeightGrid | null>
 }) => {
   const group = useRef<THREE.Group>(null)
 
@@ -229,7 +255,9 @@ const DestinationMarker = ({
     marker.visible = visible
     if (!visible) return
 
-    marker.position.set(target.x, 0.04, target.z)
+    const heights = heightsRef.current
+    const y = heights ? getHeight(heights, target.x, target.z) + 0.04 : 0.04
+    marker.position.set(target.x, y, target.z)
     const pulse = 1 + Math.sin(state.clock.elapsedTime * 7) * 0.1
     marker.scale.setScalar(pulse)
   })
@@ -248,10 +276,44 @@ const DestinationMarker = ({
   )
 }
 
-const Ground = ({ onMove }: { onMove: (point: THREE.Vector3) => void }) => {
+const Terrain = ({
+  onMove,
+  heightsRef,
+}: {
+  onMove: (point: THREE.Vector3) => void
+  heightsRef: RefObject<HeightGrid | null>
+}) => {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const geometryRef = useRef<THREE.BufferGeometry | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    loadHeightmap().then((heights) => {
+      if (cancelled) return
+
+      const geometry = createTerrainGeometry(heights)
+      geometryRef.current = geometry
+      heightsRef.current = heights
+
+      const mesh = meshRef.current
+      if (mesh) {
+        const previous = mesh.geometry
+        mesh.geometry = geometry
+        previous.dispose()
+      }
+    })
+
+    return () => {
+      cancelled = true
+      geometryRef.current?.dispose()
+      geometryRef.current = null
+    }
+  }, [heightsRef])
+
   return (
     <mesh
-      rotation={[-Math.PI / 2, 0, 0]}
+      ref={meshRef}
       onPointerDown={(event: ThreeEvent<PointerEvent>) => {
         event.stopPropagation()
         onMove(event.point)
@@ -266,6 +328,7 @@ const Ground = ({ onMove }: { onMove: (point: THREE.Vector3) => void }) => {
 const App = () => {
   const [target] = useState(() => new THREE.Vector3())
   const playerPos = useRef(new THREE.Vector3(0, CAMERA_LOOK_Y, 0))
+  const heightsRef = useRef<HeightGrid | null>(null)
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
@@ -274,10 +337,12 @@ const App = () => {
         <ambientLight intensity={0.8} />
         <directionalLight position={[10, 20, 10]} intensity={1} />
         <CameraControls playerPos={playerPos} />
-        <CharacterPlayer target={target} playerPos={playerPos} />
-        <DestinationMarker target={target} playerPos={playerPos} />
-        <Ground onMove={point => target.set(point.x, 0, point.z)} />
-        <gridHelper args={[100, 100]} position={[0, 0.01, 0]} raycast={ignoreRaycast} />
+        <CharacterPlayer target={target} playerPos={playerPos} heightsRef={heightsRef} />
+        <DestinationMarker target={target} playerPos={playerPos} heightsRef={heightsRef} />
+        <Terrain
+          heightsRef={heightsRef}
+          onMove={(point) => target.set(point.x, point.y, point.z)}
+        />
       </Canvas>
     </div>
   )
