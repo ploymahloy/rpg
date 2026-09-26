@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type RefObject,
@@ -7,12 +8,7 @@ import {
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { useAnimations, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
-import {
-  createTerrainGeometry,
-  getHeight,
-  loadHeightmap,
-  type HeightGrid,
-} from './terrain'
+import { sampleGround, type Surface } from './terrain'
 
 const PLAYER_RADIUS = 0.5
 const SPEED = 8
@@ -31,10 +27,15 @@ const CAMERA_ZOOM_SPEED = 0.0012
 const CAMERA_DISTANCE_DEFAULT = 14
 
 const CHARACTER_URL = '/models/character.glb'
+const TERRAIN_URL = '/map/terrain_test.glb'
 const CHARACTER_SCALE = 1
 const CHARACTER_YAW_OFFSET = 0
 const IDLE_CLIP = 'HumanArmature|Man_Idle'
 const RUN_CLIP = 'HumanArmature|Man_Run'
+
+const GRASS_AUDIO_URL = '/grass.wav'
+const WATER_AUDIO_URL = '/water.wav'
+const FOOTSTEP_PHASES = [0.2, 0.65] as const
 
 const createInitialOrbit = () =>
   new THREE.Spherical(
@@ -71,9 +72,9 @@ const stepPlayer = (
   object: THREE.Object3D,
   target: THREE.Vector3,
   delta: number,
-  heights: HeightGrid | null,
+  terrain: THREE.Object3D | null,
   yawOffset = 0,
-) => {
+): { isMoving: boolean; surface: Surface | null } => {
   const { position } = object
   const dx = target.x - position.x
   const dz = target.z - position.z
@@ -86,11 +87,9 @@ const stepPlayer = (
     stepYawToward(object, Math.atan2(dx, dz) + yawOffset, delta)
   }
 
-  if (heights) {
-    position.y = getHeight(heights, position.x, position.z)
-  }
-
-  return isMoving
+  const ground = sampleGround(terrain, position.x, position.z)
+  position.y = ground.y
+  return { isMoving, surface: ground.surface }
 }
 
 const syncLocomotion = (
@@ -107,6 +106,49 @@ const syncLocomotion = (
   const prev = isMoving ? idle : run
   prev.fadeOut(0.2)
   next.reset().fadeIn(0.2).play()
+}
+
+const createFootstepPlayer = (url: string) => {
+  const source = new Audio(url)
+  source.preload = 'auto'
+  return () => {
+    const clip = source.cloneNode(true) as HTMLAudioElement
+    void clip.play().catch(() => { })
+  }
+}
+
+const playGrassStep = createFootstepPlayer(GRASS_AUDIO_URL)
+const playWaterStep = createFootstepPlayer(WATER_AUDIO_URL)
+
+const phaseIndexAt = (phase: number) => {
+  let index = -1
+  for (let i = 0; i < FOOTSTEP_PHASES.length; i++) {
+    if (phase >= FOOTSTEP_PHASES[i]) index = i
+  }
+  return index
+}
+
+const playFootstepsForPhase = (
+  run: THREE.AnimationAction,
+  lastPhaseIndex: RefObject<number>,
+  surface: Surface | null,
+) => {
+  if (!surface) return
+
+  const duration = run.getClip().duration
+  if (duration <= 0) return
+
+  const phase = (run.time % duration) / duration
+  const nextIndex = phaseIndexAt(phase)
+  const prevIndex = lastPhaseIndex.current
+
+  if (nextIndex === prevIndex) return
+  lastPhaseIndex.current = nextIndex
+  // Phase dropped below both thresholds (clip wrapped) — wait for the next plant.
+  if (nextIndex < 0) return
+
+  if (surface === 'grass') playGrassStep()
+  else playWaterStep()
 }
 
 const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) => {
@@ -181,17 +223,18 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
 const CharacterPlayer = ({
   target,
   playerPos,
-  heightsRef,
+  terrainRef,
 }: {
   target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
-  heightsRef: RefObject<HeightGrid | null>
+  terrainRef: RefObject<THREE.Object3D | null>
 }) => {
   const group = useRef<THREE.Group>(null)
   const { scene, animations } = useGLTF(CHARACTER_URL)
   const { actions } = useAnimations(animations, scene)
   const wasMoving = useRef(false)
   const startedIdle = useRef(false)
+  const lastFootstepPhase = useRef(-1)
 
   useEffect(() => {
     scene.traverse((obj) => {
@@ -205,11 +248,11 @@ const CharacterPlayer = ({
 
     const idle = actions[IDLE_CLIP]
     const run = actions[RUN_CLIP]
-    const isMoving = stepPlayer(
+    const { isMoving, surface } = stepPlayer(
       mesh,
       target,
       delta,
-      heightsRef.current,
+      terrainRef.current,
       CHARACTER_YAW_OFFSET,
     )
 
@@ -218,6 +261,12 @@ const CharacterPlayer = ({
       startedIdle.current = true
     }
     syncLocomotion(isMoving, wasMoving, idle, run)
+
+    if (isMoving && run) {
+      playFootstepsForPhase(run, lastFootstepPhase, surface)
+    } else {
+      lastFootstepPhase.current = -1
+    }
 
     playerPos.current.set(
       mesh.position.x,
@@ -236,11 +285,11 @@ const CharacterPlayer = ({
 const DestinationMarker = ({
   target,
   playerPos,
-  heightsRef,
+  terrainRef,
 }: {
   target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
-  heightsRef: RefObject<HeightGrid | null>
+  terrainRef: RefObject<THREE.Object3D | null>
 }) => {
   const group = useRef<THREE.Group>(null)
 
@@ -255,8 +304,7 @@ const DestinationMarker = ({
     marker.visible = visible
     if (!visible) return
 
-    const heights = heightsRef.current
-    const y = heights ? getHeight(heights, target.x, target.z) + 0.04 : 0.04
+    const y = sampleGround(terrainRef.current, target.x, target.z).y + 0.04
     marker.position.set(target.x, y, target.z)
     const pulse = 1 + Math.sin(state.clock.elapsedTime * 7) * 0.1
     marker.scale.setScalar(pulse)
@@ -278,57 +326,36 @@ const DestinationMarker = ({
 
 const Terrain = ({
   onMove,
-  heightsRef,
+  terrainRef,
 }: {
   onMove: (point: THREE.Vector3) => void
-  heightsRef: RefObject<HeightGrid | null>
+  terrainRef: RefObject<THREE.Object3D | null>
 }) => {
-  const meshRef = useRef<THREE.Mesh>(null)
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null)
+  const { scene } = useGLTF(TERRAIN_URL)
+  const root = useMemo(() => scene.clone(true), [scene])
 
   useEffect(() => {
-    let cancelled = false
-
-    loadHeightmap().then((heights) => {
-      if (cancelled) return
-
-      const geometry = createTerrainGeometry(heights)
-      geometryRef.current = geometry
-      heightsRef.current = heights
-
-      const mesh = meshRef.current
-      if (mesh) {
-        const previous = mesh.geometry
-        mesh.geometry = geometry
-        previous.dispose()
-      }
-    })
-
+    terrainRef.current = root
     return () => {
-      cancelled = true
-      geometryRef.current?.dispose()
-      geometryRef.current = null
+      if (terrainRef.current === root) terrainRef.current = null
     }
-  }, [heightsRef])
+  }, [root, terrainRef])
 
   return (
-    <mesh
-      ref={meshRef}
+    <primitive
+      object={root}
       onPointerDown={(event: ThreeEvent<PointerEvent>) => {
         event.stopPropagation()
         onMove(event.point)
       }}
-    >
-      <planeGeometry args={[100, 100]} />
-      <meshStandardMaterial color="#3a5a40" />
-    </mesh>
+    />
   )
 }
 
 const App = () => {
   const [target] = useState(() => new THREE.Vector3())
   const playerPos = useRef(new THREE.Vector3(0, CAMERA_LOOK_Y, 0))
-  const heightsRef = useRef<HeightGrid | null>(null)
+  const terrainRef = useRef<THREE.Object3D | null>(null)
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
@@ -337,10 +364,10 @@ const App = () => {
         <ambientLight intensity={0.8} />
         <directionalLight position={[10, 20, 10]} intensity={1} />
         <CameraControls playerPos={playerPos} />
-        <CharacterPlayer target={target} playerPos={playerPos} heightsRef={heightsRef} />
-        <DestinationMarker target={target} playerPos={playerPos} heightsRef={heightsRef} />
+        <CharacterPlayer target={target} playerPos={playerPos} terrainRef={terrainRef} />
+        <DestinationMarker target={target} playerPos={playerPos} terrainRef={terrainRef} />
         <Terrain
-          heightsRef={heightsRef}
+          terrainRef={terrainRef}
           onMove={(point) => target.set(point.x, point.y, point.z)}
         />
       </Canvas>
@@ -349,5 +376,6 @@ const App = () => {
 }
 
 useGLTF.preload(CHARACTER_URL)
+useGLTF.preload(TERRAIN_URL)
 
 export default App
