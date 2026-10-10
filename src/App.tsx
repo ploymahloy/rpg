@@ -32,9 +32,6 @@ const CHARACTER_SCALE = 1
 const CHARACTER_YAW_OFFSET = 0
 const IDLE_CLIP = 'HumanArmature|Man_Idle'
 const RUN_CLIP = 'HumanArmature|Man_Run'
-
-const GRASS_AUDIO_URL = '/grass.wav'
-const WATER_AUDIO_URL = '/water.wav'
 const FOOTSTEP_PHASES = [0.2, 0.65] as const
 
 const createInitialOrbit = () =>
@@ -108,17 +105,6 @@ const syncLocomotion = (
   next.reset().fadeIn(0.2).play()
 }
 
-const createFootstepPlayer = (url: string) => {
-  const source = new Audio(url)
-  source.preload = 'auto'
-  return () => {
-    const clip = source.cloneNode(true) as HTMLAudioElement
-    void clip.play().catch(() => { })
-  }
-}
-
-const playGrassStep = createFootstepPlayer(GRASS_AUDIO_URL)
-const playWaterStep = createFootstepPlayer(WATER_AUDIO_URL)
 
 const phaseIndexAt = (phase: number) => {
   let index = -1
@@ -146,9 +132,6 @@ const playFootstepsForPhase = (
   lastPhaseIndex.current = nextIndex
   // Phase dropped below both thresholds (clip wrapped) — wait for the next plant.
   if (nextIndex < 0) return
-
-  if (surface === 'grass') playGrassStep()
-  else playWaterStep()
 }
 
 const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) => {
