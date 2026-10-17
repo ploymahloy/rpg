@@ -11,7 +11,7 @@ import * as THREE from 'three'
 import { sampleGround, type Surface } from './terrain'
 
 const PLAYER_RADIUS = 0.5
-const SPEED = 8
+const SPEED = 5
 const TURN_SPEED = 10
 const ARRIVAL_DISTANCE = 0.05
 const CAMERA_LOOK_Y = 1.2
@@ -22,12 +22,12 @@ const CAMERA_PITCH_MAX = Math.PI / 2 - 0.12
 const CAMERA_PITCH_DEFAULT = Math.PI / 2 - 0.35
 const CAMERA_YAW_DEFAULT = Math.PI / 4
 const CAMERA_ZOOM_MIN = 5
-const CAMERA_ZOOM_MAX = 35
+const CAMERA_ZOOM_MAX = 50
 const CAMERA_ZOOM_SPEED = 0.0012
 const CAMERA_DISTANCE_DEFAULT = 14
 
-const CHARACTER_URL = '/models/character.glb'
-const TERRAIN_URL = '/map/terrain_test.glb'
+const CHARACTER_URL = '/models/lowpoly_caveman.glb'
+const TERRAIN_URL = '/map/red_rock_terrain.glb'
 const CHARACTER_SCALE = 1
 const CHARACTER_YAW_OFFSET = 0
 const IDLE_CLIP = 'HumanArmature|Man_Idle'
@@ -344,8 +344,8 @@ const App = () => {
     <div style={{ position: 'fixed', inset: 0 }}>
       <Canvas camera={{ position: [...INITIAL_CAMERA_POSITION], fov: 50 }}>
         <color attach="background" args={['#87ceeb']} />
-        <ambientLight intensity={0.8} />
-        <directionalLight position={[10, 20, 10]} intensity={1} />
+        <ambientLight intensity={1.8} />
+        <directionalLight position={[10, 20, 10]} intensity={10} />
         <CameraControls playerPos={playerPos} />
         <CharacterPlayer target={target} playerPos={playerPos} terrainRef={terrainRef} />
         <DestinationMarker target={target} playerPos={playerPos} terrainRef={terrainRef} />
