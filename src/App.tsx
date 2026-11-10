@@ -26,12 +26,12 @@ const CAMERA_ZOOM_MAX = 50
 const CAMERA_ZOOM_SPEED = 0.0012
 const CAMERA_DISTANCE_DEFAULT = 14
 
-const CHARACTER_URL = '/models/lowpoly_caveman.glb'
+const CHARACTER_URL = '/models/caveman.glb'
 const TERRAIN_URL = '/map/red_rock_terrain.glb'
 const CHARACTER_SCALE = 1
 const CHARACTER_YAW_OFFSET = 0
-const IDLE_CLIP = 'HumanArmature|Man_Idle'
-const RUN_CLIP = 'HumanArmature|Man_Run'
+const IDLE_CLIP = 'mixamo.com.007'
+const RUN_CLIP = 'mixamo.com.002'
 const FOOTSTEP_PHASES = [0.2, 0.65] as const
 
 const createInitialOrbit = () =>
