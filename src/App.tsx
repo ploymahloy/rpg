@@ -21,10 +21,10 @@ const CAMERA_PITCH_MIN = 0.25
 const CAMERA_PITCH_MAX = Math.PI / 2 - 0.12
 const CAMERA_PITCH_DEFAULT = Math.PI / 2 - 0.35
 const CAMERA_YAW_DEFAULT = Math.PI / 4
-const CAMERA_ZOOM_MIN = 5
-const CAMERA_ZOOM_MAX = 50
+const CAMERA_ZOOM_MIN = 3
+const CAMERA_ZOOM_MAX = 9
 const CAMERA_ZOOM_SPEED = 0.0012
-const CAMERA_DISTANCE_DEFAULT = 14
+const CAMERA_DISTANCE_DEFAULT = 4
 
 const CHARACTER_URL = '/models/caveman.glb'
 const TERRAIN_URL = '/map/red_rock_terrain.glb'
