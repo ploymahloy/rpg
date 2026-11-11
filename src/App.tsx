@@ -1,11 +1,16 @@
 import {
+  Suspense,
+  use,
   useEffect,
   useMemo,
   useRef,
+  type ReactNode,
   type RefObject,
 } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useAnimations, useGLTF } from '@react-three/drei'
+import { useAnimations } from '@react-three/drei'
+import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
 import * as THREE from 'three'
 import { sampleGround, type Surface } from './terrain'
 
@@ -25,6 +30,49 @@ const CAMERA_DISTANCE_DEFAULT = 4
 
 const CHARACTER_URL = '/models/caveman.glb'
 const TERRAIN_URL = '/map/red_rock_terrain.glb'
+
+type LoadedModel = {
+  gltf: GLTF | null
+  error: Error | null
+}
+
+const modelLoads = new Map<string, Promise<LoadedModel>>()
+
+const toError = (error: unknown): Error => {
+  if (error instanceof Error) return error
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return new Error(error.message)
+  }
+  return new Error('Failed to load model')
+}
+
+const readGltf = (url: string) =>
+  new Promise<GLTF>((resolve, reject) => {
+    new GLTFLoader().load(url, resolve, undefined, reject)
+  })
+
+const toLoadedModel = (gltf: Promise<GLTF>): Promise<LoadedModel> =>
+  gltf.then(
+    (value) => ({ gltf: value, error: null }),
+    (reason: unknown) => ({ gltf: null, error: toError(reason) }),
+  )
+
+const loadModel = (url: string): Promise<LoadedModel> => {
+  const cached = modelLoads.get(url)
+  if (cached) return cached
+
+  const pending = toLoadedModel(readGltf(url))
+  modelLoads.set(url, pending)
+  return pending
+}
+
+loadModel(CHARACTER_URL)
+loadModel(TERRAIN_URL)
 const CHARACTER_SCALE = 1
 const CHARACTER_YAW_OFFSET = 0
 const IDLE_CLIP = 'mixamo.com.007'
@@ -228,28 +276,48 @@ const CameraControls = ({
   return null
 }
 
+const ModelGate = ({
+  url,
+  children,
+}: {
+  url: string
+  children: (gltf: GLTF) => ReactNode
+}) => {
+  const loaded = use(loadModel(url))
+
+  useEffect(() => {
+    if (loaded.error) console.error(loaded.error)
+  }, [loaded.error])
+
+  if (!loaded.gltf) return null
+  return children(loaded.gltf)
+}
+
 const CharacterPlayer = ({
+  gltf,
   playerPos,
   terrainRef,
   keys,
 }: {
+  gltf: GLTF
   playerPos: RefObject<THREE.Vector3>
   terrainRef: RefObject<THREE.Object3D | null>
   keys: RefObject<MoveKeys>
 }) => {
   const camera = useThree((state) => state.camera)
   const group = useRef<THREE.Group>(null)
-  const { scene, animations } = useGLTF(CHARACTER_URL)
-  const { actions } = useAnimations(animations, scene)
+  const { scene, animations } = gltf
+  const model = useMemo(() => {
+    const cloned = cloneSkeleton(scene)
+    cloned.traverse((obj) => {
+      obj.raycast = ignoreRaycast
+    })
+    return cloned
+  }, [scene])
+  const { actions } = useAnimations(animations, model)
   const wasMoving = useRef(false)
   const startedIdle = useRef(false)
   const lastFootstepPhase = useRef(-1)
-
-  useEffect(() => {
-    scene.traverse((obj) => {
-      obj.raycast = ignoreRaycast
-    })
-  }, [scene])
 
   useFrame((_, delta) => {
     const mesh = group.current
@@ -291,17 +359,19 @@ const CharacterPlayer = ({
 
   return (
     <group ref={group} position={[0, 0, 0]}>
-      <primitive object={scene} scale={CHARACTER_SCALE} />
+      <primitive object={model} scale={CHARACTER_SCALE} />
     </group>
   )
 }
 
 const Terrain = ({
+  gltf,
   terrainRef,
 }: {
+  gltf: GLTF
   terrainRef: RefObject<THREE.Object3D | null>
 }) => {
-  const { scene } = useGLTF(TERRAIN_URL)
+  const { scene } = gltf
   const root = useMemo(() => scene.clone(true), [scene])
 
   useEffect(() => {
@@ -356,14 +426,26 @@ const App = () => {
         <ambientLight intensity={1.8} />
         <directionalLight position={[10, 20, 10]} intensity={10} />
         <CameraControls playerPos={playerPos} keys={cameraKeys} onWheel={onWheel} />
-        <CharacterPlayer playerPos={playerPos} terrainRef={terrainRef} keys={moveKeys} />
-        <Terrain terrainRef={terrainRef} />
+        <Suspense fallback={null}>
+          <ModelGate url={CHARACTER_URL}>
+            {(gltf) => (
+              <CharacterPlayer
+                gltf={gltf}
+                playerPos={playerPos}
+                terrainRef={terrainRef}
+                keys={moveKeys}
+              />
+            )}
+          </ModelGate>
+        </Suspense>
+        <Suspense fallback={null}>
+          <ModelGate url={TERRAIN_URL}>
+            {(gltf) => <Terrain gltf={gltf} terrainRef={terrainRef} />}
+          </ModelGate>
+        </Suspense>
       </Canvas>
     </div>
   )
 }
-
-useGLTF.preload(CHARACTER_URL)
-useGLTF.preload(TERRAIN_URL)
 
 export default App
