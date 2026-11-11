@@ -2,18 +2,15 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type RefObject,
 } from 'react'
-import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useAnimations, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { sampleGround, type Surface } from './terrain'
 
-const PLAYER_RADIUS = 0.5
 const SPEED = 5
-const TURN_SPEED = 10
-const ARRIVAL_DISTANCE = 0.05
+const FACE_TURN_SPEED = 10
 const CAMERA_LOOK_Y = 1.2
 const CAMERA_YAW_SPEED = 1.8
 const CAMERA_PITCH_SPEED = 1.4
@@ -48,6 +45,54 @@ const INITIAL_CAMERA_POSITION = (() => {
 
 const ignoreRaycast = () => { }
 
+type MoveKeys = {
+  up: boolean
+  down: boolean
+  left: boolean
+  right: boolean
+}
+
+type CameraKeys = {
+  w: boolean
+  a: boolean
+  s: boolean
+  d: boolean
+}
+
+const clearedMoveKeys = (): MoveKeys => ({
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+})
+
+const clearedCameraKeys = (): CameraKeys => ({
+  w: false,
+  a: false,
+  s: false,
+  d: false,
+})
+
+const cameraForward = new THREE.Vector3()
+const cameraRight = new THREE.Vector3()
+const worldUp = new THREE.Vector3(0, 1, 0)
+
+const cameraPlanarBasis = (camera: THREE.Camera) => {
+  camera.getWorldDirection(cameraForward)
+  cameraForward.y = 0
+  if (cameraForward.lengthSq() < 1e-8) {
+    cameraForward.set(0, 0, -1)
+  } else {
+    cameraForward.normalize()
+  }
+  cameraRight.crossVectors(cameraForward, worldUp)
+  if (cameraRight.lengthSq() < 1e-8) {
+    cameraRight.set(1, 0, 0)
+  } else {
+    cameraRight.normalize()
+  }
+}
+
 const shortestAngleDelta = (from: number, to: number) =>
   Math.atan2(Math.sin(to - from), Math.cos(to - from))
 
@@ -57,7 +102,7 @@ const stepYawToward = (
   delta: number,
 ) => {
   const yawDelta = shortestAngleDelta(object.rotation.y, desiredYaw)
-  const maxTurn = TURN_SPEED * delta
+  const maxTurn = FACE_TURN_SPEED * delta
   if (Math.abs(yawDelta) <= maxTurn) {
     object.rotation.y = desiredYaw
     return
@@ -67,21 +112,20 @@ const stepYawToward = (
 
 const stepPlayer = (
   object: THREE.Object3D,
-  target: THREE.Vector3,
+  moveX: number,
+  moveZ: number,
   delta: number,
   terrain: THREE.Object3D | null,
   yawOffset = 0,
 ): { isMoving: boolean; surface: Surface | null } => {
   const { position } = object
-  const dx = target.x - position.x
-  const dz = target.z - position.z
-  const distance = Math.hypot(dx, dz)
-  const isMoving = distance >= ARRIVAL_DISTANCE
+  const distance = Math.hypot(moveX, moveZ)
+  const isMoving = distance > 0
   if (isMoving) {
-    const step = Math.min(SPEED * delta, distance)
-    position.x += (dx / distance) * step
-    position.z += (dz / distance) * step
-    stepYawToward(object, Math.atan2(dx, dz) + yawOffset, delta)
+    const step = SPEED * delta
+    position.x += (moveX / distance) * step
+    position.z += (moveZ / distance) * step
+    stepYawToward(object, Math.atan2(moveX, moveZ) + yawOffset, delta)
   }
 
   const ground = sampleGround(terrain, position.x, position.z)
@@ -134,51 +178,32 @@ const playFootstepsForPhase = (
   if (nextIndex < 0) return
 }
 
-const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) => {
+const CameraControls = ({
+  playerPos,
+  keys,
+  onWheel,
+}: {
+  playerPos: RefObject<THREE.Vector3>
+  keys: RefObject<CameraKeys>
+  onWheel: RefObject<(deltaY: number) => void>
+}) => {
   const camera = useThree((state) => state.camera)
-  const gl = useThree((state) => state.gl)
-  const keys = useRef({ w: false, a: false, s: false, d: false })
   const spherical = useRef(createInitialOrbit())
   const offset = useRef(new THREE.Vector3())
 
   useEffect(() => {
-    const setKey = (code: string, pressed: boolean) => {
-      if (code === 'KeyW') keys.current.w = pressed
-      if (code === 'KeyA') keys.current.a = pressed
-      if (code === 'KeyS') keys.current.s = pressed
-      if (code === 'KeyD') keys.current.d = pressed
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => setKey(event.code, true)
-    const onKeyUp = (event: KeyboardEvent) => setKey(event.code, false)
-    const onBlur = () => {
-      keys.current.w = false
-      keys.current.a = false
-      keys.current.s = false
-      keys.current.d = false
-    }
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault()
+    onWheel.current = (deltaY) => {
       const orbit = spherical.current
       orbit.radius = THREE.MathUtils.clamp(
-        orbit.radius * (1 + event.deltaY * CAMERA_ZOOM_SPEED),
+        orbit.radius * (1 + deltaY * CAMERA_ZOOM_SPEED),
         CAMERA_ZOOM_MIN,
         CAMERA_ZOOM_MAX,
       )
     }
-
-    const canvas = gl.domElement
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
-    window.addEventListener('blur', onBlur)
-    canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
-      window.removeEventListener('blur', onBlur)
-      canvas.removeEventListener('wheel', onWheel)
+      onWheel.current = () => { }
     }
-  }, [gl])
+  }, [onWheel])
 
   useFrame((_, delta) => {
     const target = playerPos.current
@@ -187,8 +212,8 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
     const { w, a, s, d } = keys.current
     const orbit = spherical.current
 
-    if (d) orbit.theta += CAMERA_YAW_SPEED * delta
-    if (a) orbit.theta -= CAMERA_YAW_SPEED * delta
+    if (d) orbit.theta -= CAMERA_YAW_SPEED * delta
+    if (a) orbit.theta += CAMERA_YAW_SPEED * delta
     if (w) orbit.phi -= CAMERA_PITCH_SPEED * delta
     if (s) orbit.phi += CAMERA_PITCH_SPEED * delta
 
@@ -204,14 +229,15 @@ const CameraControls = ({ playerPos }: { playerPos: RefObject<THREE.Vector3> }) 
 }
 
 const CharacterPlayer = ({
-  target,
   playerPos,
   terrainRef,
+  keys,
 }: {
-  target: THREE.Vector3
   playerPos: RefObject<THREE.Vector3>
   terrainRef: RefObject<THREE.Object3D | null>
+  keys: RefObject<MoveKeys>
 }) => {
+  const camera = useThree((state) => state.camera)
   const group = useRef<THREE.Group>(null)
   const { scene, animations } = useGLTF(CHARACTER_URL)
   const { actions } = useAnimations(animations, scene)
@@ -231,9 +257,14 @@ const CharacterPlayer = ({
 
     const idle = actions[IDLE_CLIP]
     const run = actions[RUN_CLIP]
+    cameraPlanarBasis(camera)
+    const { up, down, left, right } = keys.current
+    const throttle = (up ? 1 : 0) - (down ? 1 : 0)
+    const strafe = (right ? 1 : 0) - (left ? 1 : 0)
     const { isMoving, surface } = stepPlayer(
       mesh,
-      target,
+      cameraForward.x * throttle + cameraRight.x * strafe,
+      cameraForward.z * throttle + cameraRight.z * strafe,
       delta,
       terrainRef.current,
       CHARACTER_YAW_OFFSET,
@@ -265,53 +296,9 @@ const CharacterPlayer = ({
   )
 }
 
-const DestinationMarker = ({
-  target,
-  playerPos,
-  terrainRef,
-}: {
-  target: THREE.Vector3
-  playerPos: RefObject<THREE.Vector3>
-  terrainRef: RefObject<THREE.Object3D | null>
-}) => {
-  const group = useRef<THREE.Group>(null)
-
-  useFrame((state) => {
-    const marker = group.current
-    if (!marker) return
-
-    const pos = playerPos.current
-    const distance = Math.hypot(target.x - pos.x, target.z - pos.z)
-    const visible = distance > PLAYER_RADIUS
-
-    marker.visible = visible
-    if (!visible) return
-
-    const y = sampleGround(terrainRef.current, target.x, target.z).y + 0.04
-    marker.position.set(target.x, y, target.z)
-    const pulse = 1 + Math.sin(state.clock.elapsedTime * 7) * 0.1
-    marker.scale.setScalar(pulse)
-  })
-
-  return (
-    <group ref={group} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
-      <mesh raycast={ignoreRaycast}>
-        <ringGeometry args={[0.55, 0.85, 48]} />
-        <meshBasicMaterial color="#ffe566" transparent opacity={0.95} depthWrite={false} />
-      </mesh>
-      <mesh raycast={ignoreRaycast}>
-        <circleGeometry args={[0.28, 32]} />
-        <meshBasicMaterial color="#fff6b0" transparent opacity={0.5} depthWrite={false} />
-      </mesh>
-    </group>
-  )
-}
-
 const Terrain = ({
-  onMove,
   terrainRef,
 }: {
-  onMove: (point: THREE.Vector3) => void
   terrainRef: RefObject<THREE.Object3D | null>
 }) => {
   const { scene } = useGLTF(TERRAIN_URL)
@@ -324,35 +311,53 @@ const Terrain = ({
     }
   }, [root, terrainRef])
 
-  return (
-    <primitive
-      object={root}
-      onPointerDown={(event: ThreeEvent<PointerEvent>) => {
-        event.stopPropagation()
-        onMove(event.point)
-      }}
-    />
-  )
+  return <primitive object={root} />
 }
 
 const App = () => {
-  const [target] = useState(() => new THREE.Vector3())
   const playerPos = useRef(new THREE.Vector3(0, CAMERA_LOOK_Y, 0))
   const terrainRef = useRef<THREE.Object3D | null>(null)
+  const moveKeys = useRef<MoveKeys>(clearedMoveKeys())
+  const cameraKeys = useRef<CameraKeys>(clearedCameraKeys())
+  const onWheel = useRef<(deltaY: number) => void>(() => { })
+
+  const setKey = (code: string, pressed: boolean) => {
+    const move = moveKeys.current
+    const camera = cameraKeys.current
+    if (code === 'ArrowUp') move.up = pressed
+    if (code === 'ArrowDown') move.down = pressed
+    if (code === 'ArrowLeft') move.left = pressed
+    if (code === 'ArrowRight') move.right = pressed
+    if (code === 'KeyA') camera.a = pressed
+    if (code === 'KeyD') camera.d = pressed
+    if (code === 'KeyW') camera.w = pressed
+    if (code === 'KeyS') camera.s = pressed
+  }
 
   return (
-    <div style={{ position: 'fixed', inset: 0 }}>
+    <div
+      autoFocus
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.code.startsWith('Arrow')) event.preventDefault()
+        setKey(event.code, true)
+      }}
+      onKeyUp={(event) => setKey(event.code, false)}
+      onBlur={() => {
+        moveKeys.current = clearedMoveKeys()
+        cameraKeys.current = clearedCameraKeys()
+      }}
+      onPointerDown={(event) => event.currentTarget.focus()}
+      onWheel={(event) => onWheel.current(event.deltaY)}
+      style={{ position: 'fixed', inset: 0, outline: 'none' }}
+    >
       <Canvas camera={{ position: [...INITIAL_CAMERA_POSITION], fov: 50 }}>
         <color attach="background" args={['#87ceeb']} />
         <ambientLight intensity={1.8} />
         <directionalLight position={[10, 20, 10]} intensity={10} />
-        <CameraControls playerPos={playerPos} />
-        <CharacterPlayer target={target} playerPos={playerPos} terrainRef={terrainRef} />
-        <DestinationMarker target={target} playerPos={playerPos} terrainRef={terrainRef} />
-        <Terrain
-          terrainRef={terrainRef}
-          onMove={(point) => target.set(point.x, point.y, point.z)}
-        />
+        <CameraControls playerPos={playerPos} keys={cameraKeys} onWheel={onWheel} />
+        <CharacterPlayer playerPos={playerPos} terrainRef={terrainRef} keys={moveKeys} />
+        <Terrain terrainRef={terrainRef} />
       </Canvas>
     </div>
   )
