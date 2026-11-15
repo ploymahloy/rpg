@@ -29,7 +29,7 @@ const CAMERA_ZOOM_SPEED = 0.0012
 const CAMERA_DISTANCE_DEFAULT = 4
 
 const CHARACTER_URL = '/models/caveman.glb'
-const TERRAIN_URL = '/map/red_rock_terrain.glb'
+const TERRAIN_URL = '/models/red_rock_terrain.glb'
 
 type LoadedModel = {
   gltf: GLTF | null
